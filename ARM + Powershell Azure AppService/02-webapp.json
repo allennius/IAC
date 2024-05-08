@@ -1,0 +1,198 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "webbAppName": {
+            "type": "string",
+            "minLength": 2
+        },
+        "appServicePlanName": {
+            "type": "string",
+            "minLength": 2
+        },
+        "linuxFxVersion": {
+            "type": "string"
+        }
+    },
+    "functions": [],
+    "variables": {},
+    "resources": [
+        {
+            "type": "Microsoft.Web/serverfarms",
+            "apiVersion": "2022-09-01",
+            "name": "[parameters('appServicePlanName')]",
+            "location": "[resourceGroup().location]",
+            "sku": {
+                "name": "S1",
+                "tier": "Standard"
+            },
+            "kind": "linux",
+            "properties": {
+                "reserved": true
+            }
+        },
+        {
+            "type": "Microsoft.Web/sites",
+            "apiVersion": "2022-09-01",
+            "name": "[parameters('webbAppName')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": ["[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]"],
+            "kind": "app",
+            "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]",
+                "siteConfig": {
+                    "linuxFxVersion": "[parameters('linuxFxVersion')]",
+                    "alwaysOn": false,
+                    "appSettings": [
+                        {
+                            "name": "BudgetThreshold",
+                            "value": "800"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/sites/slots",
+            "apiVersion": "2022-09-01",
+            "name": "[concat(parameters('webbAppName'), '/Staging')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', parameters('webbAppName'))]"
+            ],
+            "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]"
+            }
+        },
+        {
+            "type": "Microsoft.Web/sites/slots",
+            "apiVersion": "2022-09-01",
+            "name": "[concat(parameters('webbAppName'), '/Dev')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', parameters('webbAppName'))]"
+            ],
+            "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]"
+            }
+        },
+        {
+            "type": "Microsoft.Insights/autoscalesettings",
+            "apiVersion": "2022-10-01",
+            "name": "[concat(parameters('appServicePlanName'), 'autoscale')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]"
+            ],
+            "properties": {
+                "enabled": true,
+                "targetResourceUri": "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]",
+                "profiles": [
+                    {
+                        "name": "maxscale3",
+                        "capacity": {
+                            "minimum": "1",
+                            "maximum": "3",
+                            "default": "1"
+                        },
+                        "rules": [
+                            {
+                                "metricTrigger": {
+                                    "metricName": "CpuPercentage",
+                                    "metricResourceUri": "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]",
+                                    "operator": "GreaterThan",
+                                    "statistic": "Average",
+                                    "threshold": 90,
+                                    "timeAggregation": "Average",
+                                    "timeGrain": "PT1M",
+                                    "timeWindow": "PT10M"
+                                },
+                                "scaleAction": {
+                                    "cooldown": "PT5M",
+                                    "direction": "Increase",
+                                    "type": "ChangeCount",
+                                    "value": "1"
+                                }
+                            },
+                            {
+                                "metricTrigger": {
+                                    "metricName": "CpuPercentage",
+                                    "metricResourceUri": "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]",
+                                    "operator": "LessThan",
+                                    "statistic": "Average",
+                                    "threshold": 60,
+                                    "timeAggregation": "Average",
+                                    "timeGrain": "PT1M",
+                                    "timeWindow": "PT10M"
+                                },
+                                "scaleAction": {
+                                    "direction": "Decrease",
+                                    "type": "ChangeCount",
+                                    "value": "1",
+                                    "cooldown": "PT5M"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "type":  "Microsoft.Consumption/budgets",
+            "apiVersion": "2023-11-01",
+            "name": "MonthlyBudget",
+            "location": "global",
+            "properties": {
+                "amount": 800,
+                "category": "Cost",
+                "timeGrain": "Monthly",
+                "timePeriod": {
+                    "startDate": "2024-02-01T00:00:00.0Z"
+                },
+                "notifications": {
+                    "Forecasted_Greater_than_50_Percent": {
+                        "enabled": true,
+                        "operator": "GreaterThan",
+                        "threshold": 50,
+                        "thresholdType": "Forecasted",
+                        "contactEmails": [
+                            "allennius@gmail.com",
+                            "robin.kamo@iths.se"
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Insights/metricAlerts",
+            "apiVersion": "2018-03-01",
+            "name": "Http4xxAlert",
+            "location": "global",
+            "dependsOn": ["[resourceId('Microsoft.Web/sites', parameters('webbAppName'))]"],
+            "properties": {
+                "criteria": {
+                    "odata.type": "Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria",
+                    "allOf": [
+                        {
+                            "name": "Http4xxResponses",
+                            "metricNamespace": "Microsoft.Web/sites",
+                            "metricName": "Http4xx",
+                            "criterionType": "StaticThresholdCriterion",
+                            "operator": "GreaterThan",
+                            "threshold": 5,
+                            "timeAggregation": "Total"
+                        }
+                    ]
+                    },
+                "enabled": true,
+                "evaluationFrequency": "PT15M",
+                "scopes": [
+                    "[resourceId('Microsoft.Web/sites', parameters('webbAppName'))]"
+                ],
+                "severity": 2,
+                "windowSize": "PT15M"
+            }          
+        }
+    ],
+    "outputs": {}
+}
